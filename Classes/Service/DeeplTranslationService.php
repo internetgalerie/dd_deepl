@@ -54,6 +54,7 @@ use TYPO3\CMS\Core\Localization\Locale;
 use TYPO3\CMS\Core\Log\LogManager;
 use TYPO3\CMS\Core\Messaging\FlashMessage;
 use TYPO3\CMS\Core\Messaging\FlashMessageService;
+use TYPO3\CMS\Core\Schema\TcaSchemaFactory;
 use TYPO3\CMS\Core\SingletonInterface;
 use TYPO3\CMS\Core\Site\Entity\SiteLanguage;
 use TYPO3\CMS\Core\Site\SiteFinder;
@@ -348,9 +349,25 @@ class DeeplTranslationService implements SingletonInterface
         $sourceLanguage = $this->getRecordSourceLanguage($tableName, $record);
         if ($this->canTranslate($sourceLanguage, $targetLanguage) && isset($GLOBALS['TCA'][$tableName])) {
             $slugField = null;
+            $subSchema = null;
+            $typeField = $GLOBALS['TCA'][$tableName]['ctrl']['type'] ?? null;
+            if ($typeField !== null) {
+                $typeValue = $record[$typeField] ?? null;
+                if ($typeValue !== null) {
+                    $schemaFactory = GeneralUtility::makeInstance(TcaSchemaFactory::class);
+                    $schema = $schemaFactory->get($tableName);
+                    if ($schema->hasSubSchema($typeValue)) {
+                        $subSchema = $schema->getSubSchema($typeValue);
+                    }
+                }
+            }
             foreach ($record as $fieldName => $fieldValue) {
                 if (isset($GLOBALS['TCA'][$tableName]['columns'][$fieldName]) && !in_array($fieldName, $exceptFieldNames)) {
                     $config = $GLOBALS['TCA'][$tableName]['columns'][$fieldName];
+                    if ($subSchema && $subSchema->hasField($fieldName)) {
+                        $schemaConfig = $subSchema->getField($fieldName)->getConfiguration();
+                        $config['config'] = array_merge($config['config'], $schemaConfig);
+                    }
                     if ($this->canFieldBeTranslated($tableName, $fieldName, $fieldValue, $config)) {
                         if ($config['config']['type'] === 'flex') {
                             $ds = $this->getFlexformDataStructure($tableName, $fieldName, $record);
@@ -369,7 +386,7 @@ class DeeplTranslationService implements SingletonInterface
                                 $tableName,
                                 $fieldName,
                                 $fieldValue,
-                                $GLOBALS['TCA'][$tableName]['columns'][$fieldName]['config'],
+                                $config['config'],
                                 $sourceLanguage,
                                 $targetLanguage
                             );
@@ -445,12 +462,12 @@ class DeeplTranslationService implements SingletonInterface
      * @throws \DeepL\DeepLException
      * @todo Possibly before/after events here too?
      */
-    public function translateText(string $text, string $sourceLanguage, string $targetLanguage): string
+    public function translateText(string $text, string $sourceLanguage, string $targetLanguage, bool $isHtml = true): string
     {
-        $options = [
+        $options = $isHtml ? [
             TranslateTextOptions::PRESERVE_FORMATTING => true,
             TranslateTextOptions::TAG_HANDLING => 'html',
-        ];
+        ] : [];
         [$sourceLanguageForGlossary] = explode('-', $sourceLanguage);
         [$targetLanguageForGlossary] = explode('-', $targetLanguage);
         $glossary = $this->configuration->getGlossaryForLanguagePair($sourceLanguageForGlossary, $targetLanguageForGlossary);
@@ -512,10 +529,10 @@ class DeeplTranslationService implements SingletonInterface
                 // Not the usual input
                 $result = false;
             }
-            if (isset($tcaConfiguration['config']['softref'])) {
-                // Not the usual input either
-                $result = false;
-            }
+            // if (isset($tcaConfiguration['config']['softref'])) {
+            //     // Not the usual input either
+            //     $result = false;
+            // }
             if (isset($tcaConfiguration['config']['valuePicker'])) {
                 // Value picker
                 $result = false;
@@ -795,13 +812,13 @@ class DeeplTranslationService implements SingletonInterface
         $event = GeneralUtility::makeInstance(BeforeFieldTranslationEvent::class, $tableName, $fieldName, $fieldValue, $sourceLanguage, $targetLanguage);
         $this->eventDispatcher->dispatch($event);
         $fieldValue = $event->getFieldValue();
-
+        $isHtml = $tcaConfig['type'] === 'text' && ($tcaConfig['enableRichtext'] ?? false);
         $fieldValue = $this->translateText(
             $fieldValue,
             $sourceLanguage->getLocale()->getLanguageCode(),
-            $this->getTargetLanguageCodeFromLocale($targetLanguage->getLocale())
+            $this->getTargetLanguageCodeFromLocale($targetLanguage->getLocale()),
+            $isHtml
         );
-
         $event = GeneralUtility::makeInstance(AfterFieldTranslatedEvent::class, $tableName, $fieldName, $fieldValue, $sourceLanguage, $targetLanguage);
         $this->eventDispatcher->dispatch($event);
         /** @noinspection PhpUnnecessaryLocalVariableInspection */
