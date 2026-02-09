@@ -64,10 +64,7 @@ class BackendModuleController extends ActionController
      * Creates the instance of the class.
      */
     public function __construct(protected readonly ModuleTemplateFactory $moduleTemplateFactory)
-    {
-        $this->pageUid = (int)($GLOBALS['TYPO3_REQUEST']->getQueryParams()['id'] ?? 0);
-        $this->pageInformation = BackendUtility::readPageAccess($this->pageUid, '');
-    }
+    { }
 
     /**
      * Downloads the glossary.
@@ -496,6 +493,16 @@ class BackendModuleController extends ActionController
     /** @inheritDoc */
     protected function resolveActionMethodName(): string
     {
-        return $this->pageUid === 0 ? 'noPageIdAction' : parent::resolveActionMethodName();
+
+        $this->pageUid = (int)($this->request->getQueryParams()['id'] ?? 0);
+        if ($this->pageUid === 0) {
+            return 'noPageIdAction';
+        }
+        $pageInformation = BackendUtility::readPageAccess($this->pageUid, '');
+        if ($pageInformation === false) {
+            return 'noPageIdAction';
+        }
+        $this->pageInformation = $pageInformation;
+        return parent::resolveActionMethodName();
     }
 }
